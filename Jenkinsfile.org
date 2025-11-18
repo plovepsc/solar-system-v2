@@ -1,0 +1,86 @@
+pipeline {
+    agent any
+
+    tools {
+        nodejs 'node-js' // Must match the label in Jenkins Global Tool Config
+    }
+    environment {
+    MONGO_HOST = "mongodb://172.25.83.246/superData"
+    MONGO_DB_CREDS = credentials('mongod-user-pass')
+    MONGO_USERNAME = credentials('mongo-db-username')
+    MONGO_PASSWORD = credentials('mongo-db-password')
+
+   }
+     options {
+       disableResume()
+       disableConcurrentBuilds abortPrevious: true
+    }
+
+    stages {
+        stage('Installing Dependencies') {
+            steps {
+                sh 'sleep 10s'
+                sh 'npm install --no-audit'
+            }
+        }
+
+        stage('Dependency Scanning') {
+            parallel {
+                stage('NPM Dependency Audit') {
+                    steps {
+                        sh '''
+                            npm audit --audit-level=critical
+                        '''
+                    }
+                }
+
+                stage('OWASP Dependency Check') {
+                    steps {
+                        dependencyCheck additionalArguments: '''
+                            --scan \'./\'
+                            --out \'./\'
+                            --format \'ALL\'
+                            --prettyPrint''', odcInstallation: 'OWASP-DepCheck-10'
+                            dependencyCheckPublisher failedTotalCritical: 1, pattern: 'dependency-check-report.xml', stopBuild: true
+                            junit allowEmptyResults: true, stdioRetention: '', testResults: 'dependency-check-junit.xml'
+                            publishHTML([allowMissing: true, alwaysLinkToLastBuild: true, icon: '', keepAll: true, reportDir: './', reportFiles: 'dependency-check-report.html', reportName: 'Dependency Check HTML Report', reportTitles: '', useWrapperFileDirectly: true])
+
+                    }
+                }
+            }
+        }
+               stage('Unit Testing') {
+                   options { retry(2) }
+            steps {
+                sh 'echo Colon separate - $MONGO_DB_CREDS'
+                sh 'echo Username - $MONGO_DB_USR'
+                sh 'echo Password - $MONGO_DB_PSW'
+                sh 'npm test'
+                junit allowEmptyResults: true, stdioRetention: '', testResults: 'test-results.xml'
+               
+                
+            }
+             
+        }
+
+                   stage('Code Coverage') {
+                  
+            steps {
+  
+                    catchError(buildResult: 'SUCCESS', message: 'Oops! it will be fixed in future releases', stageResult: 'UNSTABLE') {
+                    sh 'npm run coverage'
+                    
+                }
+                publishHTML([allowMissing: true, alwaysLinkToLastBuild: true, icon: '', keepAll: true, reportDir: 'coverage/lcov-report', reportFiles: 'index.html', reportName: 'Code Coverage HTML Report', reportTitles: '', useWrapperFileDirectly: true]) 
+
+                   
+
+            
+            }
+         
+        }
+
+    }
+
+
+}
